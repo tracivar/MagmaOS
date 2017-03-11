@@ -1,0 +1,57 @@
+﻿This document describes the nature by which the Magma File System exists and is implemented.
+
+The Magma File System is designed to be compact, and friendly when used asynchronously over the web. In terms of structure, it essentially has two parts. 
+It is intended to be used over the internet using websockets or AJAX. For this reason, it is important for the filesystem to be structured in a way that
+a large file, or multiple files can be obtained in a single web request but not cached entirely in the frontend.
+
+To achieve this, the MFS stores all volume and structure metadata at the start of the store in a serializable format. This serializable data is loaded in
+it's entirety and rewritten entirely to the store periodically. While this is less bandwidth efficient than dealing with requests individually, it removes
+the need of the backend service providing the volume to process the data coming in. 
+
+An MFS volume uses a cluster size of 16KB. This means small files will take up a minimum of 16KB (16384 bytes). A standard volume size with 16,384 chunks
+will therefore be able to store roughly 256MB of data, but has a theoretical maximum of 32TB. The important distinction here is that the file information
+such as name, location, date created, modified are stored in a seperate serialized format. 
+
+The idea is that a MFS can exist not only on the server, but also in local storage, or entirely in memory.
+
+A practical usage scenario would be a 128 chunk system store for data storage in the local browser (session information, temp files). Together with the
+serializable metadata, this would yield a maximum of 2MB storage, with the metadata stored in JSON. The 16KB block size is perfect for storing small
+thumbnails and very descriptive configuration information. All whilst keeping in the practical limit of 5M for localStorage on most browsers.
+
+The JSON structure would look as followed.
+
+The resulting JSON should ideally minimize long words, using single letters in place of words.
+
+//Root Node
+
+$mfs.defs.root = function () {
+    this.volume = function () {
+        this.name = ""; //Max Length 32
+        this.GUID = $mfs.func.newGuid();
+        this.size = 128;
+    }
+    this.memcache = true; //Whether to keep the entire collection in memory.
+    this.directories = new Array();
+    this.files = new Array();
+}
+
+$mfs.defs.directory = function () {
+    this.name = "New Folder"; //Max Length 128
+    this.GUID = $mfs.func.newGuid(); //Short GUID
+    this.created = Date.now();  //Unix epoch ms
+    this.hidden = false;
+    this.system = false;
+}
+
+$mfs.defs.file = function () {
+    this.name = "New Document.txt"; //Max Length 128
+    this.GUID = $mfs.func.newGuid(); //Short GUID
+    this.created = Date.now();  //Unix epoch ms
+    this.accessed = Date.now(); //Unix epoch ms
+    this.modified = Date.now();  //Unix epoch ms
+    this.hidden = false;
+    this.system = false;
+    this.directory = "a570b6d8-5f93"; //GUID of the directory
+    this.size = 832642; //File size in bytes.
+    this.chunks = []; //Integer ID of chunks which contain the file, sequential order
+}

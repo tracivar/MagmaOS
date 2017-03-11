@@ -108,6 +108,7 @@
   <ItemGroup>
     <Content Include="core\template.js" />
     <Content Include="core\mkernel.js" />
+    <Content Include="documentation\MagmaFileSystem.txt" />
     <Content Include="runtime\boot.js" />
     <Content Include="index.html" />
     <Content Include="Web.config" />

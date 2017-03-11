@@ -12,12 +12,12 @@ var $magma = new Object();
 (function () {
     this.Status = { Undefined: 0, Success: 1, Error: 2 };
     //Standard model for communicating messages to the shell.
-    this.Message = function (name,message,status) {
-            this.StatusCode = $magma.Status.Undefined;
-            this.Name = "";
-            this.SenderIdentity = null;
-            this.VerboseMessage = "";
-            this.Payload = {};
+    this.Message = function (name, message, status) {
+        this.StatusCode = $magma.Status.Undefined;
+        this.Name = "";
+        this.SenderIdentity = null;
+        this.VerboseMessage = "";
+        this.Payload = {};
     }
     //Standard Model for communicating scheduler commands to the shell.
     this.SchedulerCommand = function (command) {
@@ -43,7 +43,7 @@ var $magma = new Object();
     this.MessageProcessor = function (ev) {
         var data = ev.data;
         try {
-           data = JSON.parse(data);
+            data = JSON.parse(data);
         } catch (e) {
             //Exception here.
         }
@@ -54,7 +54,7 @@ var $magma = new Object();
                     case "moduleinfo": {
                         var response = new $magma.MethodResponse();
                         response.RequestID = data.RequestID;
-                        response.Response = { Version: $module.Version, Name: $module.Name};
+                        response.Response = { Version: $module.Version, Name: $module.Name };
                         self.postMessage(response);
                     } break;
                     default: {
@@ -92,7 +92,7 @@ var $magma = new Object();
                 var message = { "StatusCode": 1, "Name": "Failure to process request.", "VerboseMessage": "A requested was recieved that did not contain a request ID and/or command.", "Payload": {} };
                 self.postMessage(message);
             }
-        } 
+        }
     }
     self.onmessage = this.MessageProcessor;
     //Usage: Create a message or command object using the types above ($magma.Message) and use self.postMessage to send it to the surface.
@@ -122,6 +122,10 @@ var $magma = new Object();
 
 }).bind($magma)();
 
+$module._filesystem = new Object();
+
+$module._filesystem.volumes = new Array();
+
 //The heartbeat event is called every 10 seconds and tells the shell that we are not stuck in a loop.
 $module._Heartbeat = function (_) {
     var message = new $magma.SchedulerCommand("alive");
@@ -134,10 +138,155 @@ $module._Init = function (_) {
 
     //The module will be terminated without this.
     self.setInterval($module._Heartbeat, 2500);
+
+    //Initialize memory filesystem.
+    var fsdef = new $mfs.defs.volume();
+    fsdef.mount = "sys0";
+
+    $module._filesystem.volumes[$module._filesystem.volumes.length] = new $mfs.sys.memoryvolume(fsdef);
+
+}
+
+
+//Magma file system.
+var $mfs = new Object();
+$mfs.func = new Object();
+$mfs.defs = new Object();
+$mfs.log = new Object();
+$mfs.sys = new Object();
+$mfs.enum = new Object();
+
+$mfs.func.newGuid = function () {
+    function S4() {
+        return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
+    }
+    return (S4() + S4() + "-" + S4()).toLowerCase();
+}
+
+$mfs.defs.root = function () {
+
+        this.volumename = ""; //Max Length 32
+        this.volumeGUID = $mfs.func.newGuid();
+        this.volumesize = 128;
+    this.memcache = true; //Whether to keep the entire collection in memory.
+    this.directories = new Array();
+    this.files = new Array();
+}
+
+$mfs.defs.directory = function () {
+    this.name = "New Folder"; //Max Length 128
+    this.GUID = $mfs.func.newGuid(); //Short GUID
+    this.created = Date.now();  //Unix epoch ms
+    this.hidden = false;
+    this.system = false;
+}
+
+$mfs.defs.file = function () {
+    this.name = "New Document.txt"; //Max Length 128
+    this.GUID = $mfs.func.newGuid(); //Short GUID
+    this.created = Date.now();  //Unix epoch ms
+    this.accessed = Date.now(); //Unix epoch ms
+    this.modified = Date.now();  //Unix epoch ms
+    this.hidden = false;
+    this.system = false;
+    this.directory = "a570b6d8-5f93"; //GUID of the directory
+    this.size = 832642; //File size in bytes.
+    this.chunks = []; //Integer ID of chunks which contain the file, sequential order
+}
+
+$mfs.defs.endpoint = function () {
+    this.transport = "HTTP";
+    this.location = "/file";
+    this.user = "";
+    this.privateKey = "";
+    this.ratelimit = 8; //Maximum number of chunks to read per transaction.
+}
+
+$mfs.defs.volume = function () {
+    this.type = $mfs.enum.InMemory;
+    this.mode = $mfs.enum.volumemode.CreateNew;
+    this.endpoint = new $mfs.defs.endpoint;
+    this.mount = "";
+    this.size = 128;
+}
+
+$mfs.enum.volumemode = { CreateNew: "crnow", OpenExisting: "openex" };
+$mfs.enum.volumetype = {InMemory: "memdb", LocalStorage: "locals", WebSockets: "websock", AJAX: "restdb"};
+
+$mfs.log.volume = function () {
+    this.Meta = new $mfs.defs.root();
+    this.MountName = "dev0";
+    this.cacheChunks = new Array();
+    this.cacheLimit = 64; //Limit to how many chunks can be cached at once.
+}
+$mfs.log.chunk = function () {
+    this.ID = 0;
+    this.data = new Uint8Array(16384); 
+    this.lastAccessed = Date.now();
+}
+$mfs.log.file = function () {
+    this.definition = new $mfs.defs.file();
+    this.chunkData = new Array(); //Provide any chunkdata.
+    this.streaming = false; //Defines whether the file object contains all chunks to constitute a file.
 }
 
 
 
+//This object is an entire filesystem in memory. It can be serialized and stored in localStorage or a string.
+$mfs.sys.memoryvolume = function (obj) {
+    if (obj instanceof $mfs.defs.volume) {
+
+        if (obj.type == $mfs.enum.InMemory) {
+
+            switch (obj.mode) {
+                case "crnow": {
+
+                    var startM = Date.now();
+
+                    if (obj.size < 32 || obj.size > 1024) {
+                        throw new $mfs.sys.exception("The memoryvolume object detected a desired volume size that is considered unsafe. The chunk size '"+obj.size.toString()+"' is too large to safely store in memory.");
+                    }
+
+                    this.Type = obj.type;
+                    this.Volume = new $mfs.log.volume();
+                    this.Volume.MountName = obj.mount;
+                    this.Volume.cacheLimit = obj.size;
+                    this.Volume.Meta.memcache = true; 
+
+                    //Create chunks in memory.
+                    for (var i = 0; i < obj.size; i++) {
+                        this.Volume.cacheChunks[i] = new $mfs.log.chunk();
+                    }
+
+
+                    var message = { "StatusCode": 0, "Name": "MagmaFileSystem", "VerboseMessage": "Initialized in-memory filesystem in "+(Date.now()-startM)+"ms. [" + this.Volume.MountName + ":"+(obj.size*16)+"KB]", "Payload": {} };
+                    self.postMessage(message);
+
+                    return this;
+
+                } break;
+                default: {
+                    throw new $mfs.sys.exception("The memoryvolume object cannot support operating mode of '" + (obj.mode)+"'.");
+                } break;
+            }
+
+
+        } else {
+            throw new $mfs.sys.exception("A memoryvolume object cannot support a volume of type '" + (obj.type)+"'.");
+        }
+
+    } else {
+        throw new $mfs.sys.exception("The volume definition provided was not of type $mfs.defs.volume");
+    }
+    this.toString = function () {
+        return "/" + this.Volume.MountName + " [" + this.Type + "] Size: " + this.Volume.Meta.volumesize + " chunks. (" + (this.Volume.Meta.volumesize * 16) + "KB)";
+    }
+}
+
+$mfs.sys.exception = function (message) {
+    this.Name = "FileSystem Exception";
+    this.Message = message;
+}
 
 //Don't change this, make sure this executes last.
 $magma.Init();
