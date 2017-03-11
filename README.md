@@ -1,6 +1,9 @@
 # MagmaOS
 Web based operating environment with kernel and multi-threading.
 
+## Framework Agnostic
+
+This project is explicitly framework agnostic. If you are to contribute to this project you should be adept at vanilla JavaScript. Use of frameworks and third party libraries such as **jQuery**, **AngularJS** and other libraries is strictly forbidden. If you are critical of this decision I'd love to hear your thoughts, but would recommend you consider the benefits of having this approach when developing an already heavily layered environment.
 
 ## Topology
 The project is imagined as a platform for developing rich applications in a desktop-esque environment. The plan is to have modules execute under web worker instances with strictness enabled, so that true multi-tasking can be achieved. These modules might provide services to the engine as a whole such as IO facilitators/emulators, rendering engines and logic libraries which can communicate with a presentation engine (window manager) to provide an interface.
