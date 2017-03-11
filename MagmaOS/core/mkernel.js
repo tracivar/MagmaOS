@@ -165,9 +165,9 @@ $mfs.func.newGuid = function () {
 
 $mfs.defs.root = function () {
 
-        this.volumename = ""; //Max Length 32
-        this.volumeGUID = $mfs.func.newGuid();
-        this.volumesize = 128;
+    this.volumename = ""; //Max Length 32
+    this.volumeGUID = $mfs.func.newGuid();
+    this.volumesize = 128;
     this.memcache = true; //Whether to keep the entire collection in memory.
     this.directories = new Array();
     this.files = new Array();
@@ -211,7 +211,7 @@ $mfs.defs.volume = function () {
 }
 
 $mfs.enum.volumemode = { CreateNew: "crnow", OpenExisting: "openex" };
-$mfs.enum.volumetype = {InMemory: "memdb", LocalStorage: "locals", WebSockets: "websock", AJAX: "restdb"};
+$mfs.enum.volumetype = { InMemory: "memdb", LocalStorage: "locals", WebSockets: "websock", AJAX: "restdb" };
 
 $mfs.log.volume = function () {
     this.Meta = new $mfs.defs.root();
@@ -221,7 +221,7 @@ $mfs.log.volume = function () {
 }
 $mfs.log.chunk = function () {
     this.ID = 0;
-    this.data = new Uint8Array(16384); 
+    this.data = new Uint8Array(16384);
     this.lastAccessed = Date.now();
 }
 $mfs.log.file = function () {
@@ -244,14 +244,14 @@ $mfs.sys.memoryvolume = function (obj) {
                     var startM = Date.now();
 
                     if (obj.size < 32 || obj.size > 1024) {
-                        throw new $mfs.sys.exception("The memoryvolume object detected a desired volume size that is considered unsafe. The chunk size '"+obj.size.toString()+"' is too large to safely store in memory.");
+                        throw new $mfs.sys.exception("The memoryvolume object detected a desired volume size that is considered unsafe. The chunk size '" + obj.size.toString() + "' is too large to safely store in memory.");
                     }
 
                     this.Type = obj.type;
                     this.Volume = new $mfs.log.volume();
                     this.Volume.MountName = obj.mount;
                     this.Volume.cacheLimit = obj.size;
-                    this.Volume.Meta.memcache = true; 
+                    this.Volume.Meta.memcache = true;
 
                     //Create chunks in memory.
                     for (var i = 0; i < obj.size; i++) {
@@ -259,20 +259,20 @@ $mfs.sys.memoryvolume = function (obj) {
                     }
 
 
-                    var message = { "StatusCode": 0, "Name": "MagmaFileSystem", "VerboseMessage": "Initialized in-memory filesystem in "+(Date.now()-startM)+"ms. [" + this.Volume.MountName + ":"+(obj.size*16)+"KB]", "Payload": {} };
+                    var message = { "StatusCode": 0, "Name": "MagmaFileSystem", "VerboseMessage": "Initialized in-memory filesystem in " + (Date.now() - startM) + "ms. [" + this.Volume.MountName + ":" + (obj.size * 16) + "KB]", "Payload": {} };
                     self.postMessage(message);
 
                     return this;
 
                 } break;
                 default: {
-                    throw new $mfs.sys.exception("The memoryvolume object cannot support operating mode of '" + (obj.mode)+"'.");
+                    throw new $mfs.sys.exception("The memoryvolume object cannot support operating mode of '" + (obj.mode) + "'.");
                 } break;
             }
 
 
         } else {
-            throw new $mfs.sys.exception("A memoryvolume object cannot support a volume of type '" + (obj.type)+"'.");
+            throw new $mfs.sys.exception("A memoryvolume object cannot support a volume of type '" + (obj.type) + "'.");
         }
 
     } else {
@@ -286,6 +286,86 @@ $mfs.sys.memoryvolume = function (obj) {
 $mfs.sys.exception = function (message) {
     this.Name = "FileSystem Exception";
     this.Message = message;
+}
+
+//Abstract objects for dealing with data.
+$mfs.File = new Object();
+
+$mfs.File.Open = function (path) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Attemepts to delete a file with the given path.
+$mfs.File.Delete = function (path) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Attemepts to move a file from one location to another, also used for renaming a file.
+$mfs.File.Move = function (source,destination) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Attemepts to delete a file with the given path.
+$mfs.File.Copy = function (source,destination) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Attempts to create a blank file at the given path.
+$mfs.File.Create = function (path) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Returns true if the file exists at the location.
+$mfs.File.Exists = function (path) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Writes bytes to the end of the file.
+$mfs.File.AppendBytes = function (path, bytes) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Writes text to the end of the file. UTF-8 encoding.
+$mfs.File.AppendText = function (path, text) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Reads bytes from the file, starting at position <start> for <count> bytes.
+$mfs.File.ReadBytes = function (path, start, count) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Reads text from the file, starting at position <start> for <count> bytes. UTF-8 encoding.
+$mfs.File.ReadText = function (path, start, count) {
+    throw new $mfs.sys.NotImplementedException();
+}
+//Creates a directory at the specified location.
+$mfs.Directory.CreateDirectory = function (path) {
+    throw new $mfs.sys.NotImplementedException();
+}
+
+//Deletes and empty directory at the specified location.
+$mfs.Directory.Delete = function (path) {
+    throw new $mfs.sys.NotImplementedException();
+}
+
+//Returns a list of directories at the provided location.
+$mfs.Directory.GetDirectories = function (path) {
+    throw new $mfs.sys.NotImplementedException();
+}
+
+//Returns a list of files at the provided location.
+$mfs.Directory.GetFiles = function (path) {
+    throw new $mfs.sys.NotImplementedException();
+}
+
+//Returns whether a directory exists at the provided location.
+$mfs.Directory.Exists = function (path) {
+    throw new $mfs.sys.NotImplementedException();
+}
+
+
+$mfs.sys.FileException = function (message) {
+    this.Name = "FileException";
+    this.Message = message;
+    this.Inner = null;
+}
+
+$mfs.sys.NotImplementedException = function () {
+    this.Name = "NotImplementedException";
+    this.Message ="The requested command has not been developed.";
+    this.Inner = null;
 }
 
 //Don't change this, make sure this executes last.
