@@ -3,8 +3,9 @@
 //Module parameters. Change this to reflect what your module does.
 var $module = new Object();
 
-$module.Name = "Kernel";
-$module.Description = "Handles low level operations and interactions with external services.";
+$module.Name = "Template Module";
+$module.Description = "This is a barebones module with minimal logic. Use this as a template and expand on it.";
+$module.Version = { Major: 0, Minor: 1, Revision: 1, Name: "Dev" };
 
 
 //This is a magma primining module. There is some initialization for communication and management. Do not modify this code.
@@ -129,15 +130,24 @@ $module._Heartbeat = function (_) {
 }
 
 $module._Init = function (_) {
-    var message = { "StatusCode": 0, "Name": "Kernel", "VerboseMessage": "Injection succesful.", "Payload": {} };
+    var message = new $magma.Message($module.Name, "Injection Successful.", 1);
     self.postMessage(message);
 
     //The module will be terminated without this.
     self.setInterval($module._Heartbeat, 2500);
 }
 
+//Uncomment the code below and replace YourFunction with your desired method name. You can then call this from Magma.
+/*
+$module.YourFunction = function (obj) {
+    var response = new $magma.MethodResponse();
 
+    //The objects in here will be returned to the shell, consider it the output of the function.
+    response.Response = { Message: "Executed command successfully!" };
 
+    return response;
+}
+*/
 
 //Don't change this, make sure this executes last.
 $magma.Init();

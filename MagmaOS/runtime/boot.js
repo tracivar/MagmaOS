@@ -7,6 +7,7 @@
         $magma = new (function () {
             var _version = { Major: 0, Minor: 1, Revision: 1, Name: "Mainline" };
             var _messages = 42;
+            var _guidStatic = 0;
             var _initFunc = function () {
                 //This is an important function that is the catalyst for runtime.
                 //Change carefully!
@@ -28,8 +29,9 @@
             Object.defineProperty(this, "Version", { get: function () { return _version; } });
             Object.defineProperty(this, "Init", { get: function () { return _initFunc; } });
             this.Tell = function (a) {
-                    _messages.Tell(a);
+                _messages.Tell(a);
             };
+            Object.defineProperty(this, "GUID_Phase", { get: function () { _guidStatic++; return _guidStatic; } })
         })();
 
         //Low level exception handling.
@@ -41,8 +43,8 @@
         $magma.MessageBus = function () {
             var _messages = new Array();
             this.Tell = function (message) {
-                if (typeof(message.VerboseMessage) !== "undefined") {
-                    console.log("[" + (new Date().toLocaleTimeString()) + "] [%c"+message.SenderIdentity+"%c] %c" + message.VerboseMessage, "font-weight: bold; color: #f00; letter-spacing:5px;","","font-weight: bold; color: #135;");
+                if (typeof (message.VerboseMessage) !== "undefined") {
+                    console.log("[" + (new Date().toLocaleTimeString()) + "] [%c" + message.SenderIdentity + "%c] %c" + message.VerboseMessage, "font-weight: bold; color: #f00; letter-spacing:5px;", "", "font-weight: bold; color: #135;");
                 } else {
                     throw new $magma.Exception("Only valid magma message objects are permitted through transmission to the Tell method.");
                 }
@@ -50,21 +52,64 @@
         }
 
         //This object contains the necessary properties for interacting with a module. It gets passed directly to the worker object.
-        $magma.MethodRequest = function () {
-            var _completed = 0;
-            var _sent = 0;
-            var _error = 0;
+        $magma.MethodRequest = function (targetModule, request, args,callback) {
+            var _completed = false;
+            var _sent = false;
+            var _error = false;
             var _targetModule = "";
             var _request = "";
             var _args = {};
-            var _response = {};
+            var _callback = "";
+            this.Response = {};
+            this.RequestID = "M" + $magma.GUID_Phase.toString();
+            if (typeof args == "object") {
+                _args = args;
+            }
+            if (typeof targetModule === "string") {
+                _targetModule = targetModule;
+            } else {
+                throw new $magma.Exception("The target module can't be blank.");
+            }
+            if (typeof request !== "undefined" && request.length > 0) {
+                _request = request;
+            } else {
+                throw new $magma.Exception("You must provide a request command.");
+            }
+            this.targetModule = _targetModule;
+            this.args = _args;
+            this.request = _request;
+            if (typeof callback !== "undefined") {
+                _callback = callback;
+            } 
+
             //Indicates whether a response was recieved from the module.
-            Object.defineProperty(this, "Completed", { get: function () { return _completed; } });
+            Object.defineProperty(this, "Completed", { get: function () { return _completed; }, set: function (_c) { _complete = _c; try { _callback(); } catch (a) { }; } });
             //Indicates whether the request has been sent to the module.
-            Object.defineProperty(this, "Sent", { get: function () { return _sent; } });
+            Object.defineProperty(this, "Sent", { get: function () { return _sent; }, set: function (_b) { _sent = _b; } });
             //Indicates whether an error ocurred trying to send the request the module.
-            Object.defineProperty(this, "Error", { get: function () { return _sent; } });
+            Object.defineProperty(this, "Error", { get: function () { return _error; }, set: function (_a) { _error = _a; } });
+
+            this.SendRequest = function () {
+                if (!_sent && _request != "") {
+                    var module = $magma.Modules.Select(_targetModule);
+                    if (typeof module !== "undefined") {
+                        if (module.State == $magma.ModuleDefinitionState.Active) {
+                            module.Send(this);
+                        } else {
+                            throw new $magma.Exception("Could not send request to '" + _targetModule + "' because the module was not active.");
+                        }
+                    } else {
+                        throw new $magma.Exception("The module '" + _targetModule + "' was not found in the active module list.");
+                    }
+                }
+            }
         }
+
+      
+
+
+        Object.freeze($magma.MethodRequest);
+
 
         //The module system handles the book-keeping and loading of components.
         $magma.ModuleManager = function () {
@@ -88,15 +133,13 @@
             });
             //This should not be enabled in production
             Object.defineProperty(this, "Modules", { get: function () { return _modules; } });
-            Object.defineProperty(this, "Select", {
-                set: function (name) {
-                    for (var n = 0; n < _modules.length; n++) {
-                        if (_modules[n].Name.toLowerCase() == name) {
-                            return _modules[n];
-                        }
+            this.Select = function (name) {
+                for (var n = 0; n < _modules.length; n++) {
+                    if (_modules[n].Name.toLowerCase() == name.toLowerCase()) {
+                        return _modules[n];
                     }
                 }
-            });
+            }
             this.toString = function () {
                 return "Magma Module System";
             }
@@ -127,59 +170,81 @@
             var _moduleState = $magma.ModuleDefinitionState.Unloaded;
             var _workerRef = null;
             var _lastCall = Date.now();
+            var _sentRequests = new Array();
             var _loadFunc = function () {
                 if (_moduleState == 0) {
                     _moduleState = 1;
 
-                    /*
-                    var scriptLoader = document.createElement("script");
-                    scriptLoader.src = _location;
-                    scriptLoader.setAttribute("type", "text/javascript");
-                    document.head.appendChild(scriptLoader);
-                    */
                     _workerRef = new Worker(_location);
                     _workerRef.addEventListener('message', function (e) {
                         var message = e.data;
-                        if (typeof message.StatusCode !== "undefined" && typeof message.VerboseMessage !== "undefined") {
-                            switch (message.Name.toLowerCase()) {
-                                case "_sys": {
-                                    if (typeof(message.Command) !== "undefined" && typeof(message.Args) !== "undefined") {
-                                        switch (message.Command.toLowerCase()) {
-                                            case "alive": {
-                                                //This is a heartbeat to tell us the application is not timing out.
-                                                _lastCall = Date.now();
-                                            } break;
-                                            case "stop": {
-                                                _moduleState = $magma.ModuleDefinitionStatmessage.Unloaded;
-                                                self.close();
-                                            } break;
-                                            default: {
-                                                throw new $magma.Exception("The module '" + _internalName + "' sent an illegal system command '" + message.Command + "'.");
-                                            } break;
-                                        }
-                                    }
-                                } break;
-                                default: {
-                                    //Tranpose the object.
-                                    var tsMessage = new $magma.Message();
-                                    tsMessage.StatusCode = message.StatusCode;
-                                    tsMessage.SenderIdentity = _internalName;
-                                    tsMessage.VerboseMessage = message.VerboseMessage;
-                                    try {
-                                        tsMessage.Name = message.Name;
-                                        tsMessage.Payload = message.Payload;
-                                    } catch (a) {
+                        if (typeof message !== "undefined") {
+                            if (typeof message.StatusCode !== "undefined" && typeof message.VerboseMessage !== "undefined") {
+                                switch (message.Name.toLowerCase()) {
+                                    case "_response": {
+                                        if (typeof (message.RequestID) !== "undefined" && typeof (message.Response) !== "undefined") {
+                                          
+                                                for (var n = 0; n < _sentRequests.length; n++) {
+                                                    if (_sentRequests[n].RequestID == message.RequestID) {
+                                                        if (message.StatusCode == 2) {
+                                                            _sentRequests[n].Error = true;
+                                                        }
+                                                        _sentRequests[n].Completed = true;
+                                                        _sentRequests[n].Response = message.Response;
 
-                                    }
-                                    $magma.Tell(tsMessage);
-                                } break;
+                                                    }
+                                                }
+                                        } else {
+                                            if (typeof (message.RequestID) !== "undefined") {
+                                                for (var n = 0; n < _sentRequests.length; n++) {
+                                                    if (_sentRequests[n].RequestID == message.RequestID) {
+                                                        _sentRequests[n].Error = true;
+                                                    }
+                                                }
+                                            }
+                                            throw new $magma.Exception("A response was recieved for '" + _internalName + "' but it was malformed. ");
+                                        }
+                                    } break;
+                                    case "_sys": {
+                                        if (typeof (message.Command) !== "undefined" && typeof (message.Args) !== "undefined") {
+                                            switch (message.Command.toLowerCase()) {
+                                                case "alive": {
+                                                    _moduleState = $magma.ModuleDefinitionState.Active;
+                                                    //This is a heartbeat to tell us the application is not timing out.
+                                                    _lastCall = Date.now();
+                                                } break;
+                                                case "stop": {
+                                                    _moduleState = $magma.ModuleDefinitionStatmessage.Unloaded;
+                                                    self.close();
+                                                } break;
+                                                default: {
+                                                    throw new $magma.Exception("The module '" + _internalName + "' sent an illegal system command '" + message.Command + "'.");
+                                                } break;
+                                            }
+                                        }
+                                    } break;
+                                    default: {
+                                        //Tranpose the object.
+                                        var tsMessage = new $magma.Message();
+                                        tsMessage.StatusCode = message.StatusCode;
+                                        tsMessage.SenderIdentity = _internalName;
+                                        tsMessage.VerboseMessage = message.VerboseMessage;
+                                        try {
+                                            tsMessage.Name = message.Name;
+                                            tsMessage.Payload = message.Payload;
+                                        } catch (a) {
+
+                                        }
+                                        $magma.Tell(tsMessage);
+                                    } break;
+                                }
+                            } else {
+                                throw new $magma.Exception("The module '" + _internalName + "' passed a malformed object. The message was disposed.");
                             }
-                        } else {
-                            throw new $magma.Exception("The module '" + _internalName + "' passed a malformed object. The message was disposed.");
                         }
                         //$magma.Tell(e);
                     })
-                    
+
                 } else {
                     throw new $magma.Exception("The module '" + _internalName + "' cannot be loaded because an attempt to load it was already made.");
                 }
@@ -209,6 +274,24 @@
             //Public Members
             Object.defineProperty(this, "Name", { get: function () { return _internalName; } });
             Object.defineProperty(this, "State", { get: function () { return _moduleState; } });
+
+            //Sends the method request to the module.
+            this.Send = function (obj) {
+                if (obj instanceof $magma.MethodRequest && obj.targetModule.toLowerCase() == _internalName.toLowerCase()) {
+                    var found = false;
+                    for (var n = 0; n < _sentRequests.length; n++) {
+                        if (_sentRequests[n].RequestID == obj.RequestID) {
+                            found = true;
+                        }
+                    }
+                    if (found) {
+                        throw new $magma.Exception("The provided method request '" + obj.RequestID + "' has already been queued for transmission to the module.");
+                    }
+                    _sentRequests[_sentRequests.length] = obj;
+                    obj.Sent = true;
+                    _workerRef.postMessage(JSON.stringify(obj));
+                }
+            }
 
             this.Load = _loadFunc;
 
