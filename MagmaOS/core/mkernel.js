@@ -210,6 +210,12 @@ $mfs.defs.volume = function () {
     this.size = 128;
 }
 
+$mfs.defs.pathpart = function () {
+    this.type = "";
+    this.name = "";
+    this.reference = null;
+}
+
 $mfs.enum.volumemode = { CreateNew: "crnow", OpenExisting: "openex" };
 $mfs.enum.volumetype = { InMemory: "memdb", LocalStorage: "locals", WebSockets: "websock", AJAX: "restdb" };
 
@@ -288,6 +294,69 @@ $mfs.sys.exception = function (message) {
     this.Message = message;
 }
 
+//Takes an input path and segments it into logical objects. Useful for finding the target volumes.
+$mfs.sys.route = function (path) {
+
+    var split = path.split('/');
+    var route = new Array();
+
+    for (var i = 0; i < split.length; i++) {
+        if (split[i] == "" || split == " ") {
+            split.splice(i, 1);
+        } else {
+            //We need to find the volume.
+            if (route.length == 0) {
+                for (var n = 0; n < $module._filesystem.volumes.length; n++) {
+                    if ($module._filesystem.volumes[n].Volume.MountName.toLowerCase() == split[i].toLowerCase()) {
+                        var part = new $mfs.defs.pathpart();
+                        part.name = $module._filesystem.volumes[n].Volume.MountName;
+                        part.type = "vol";
+                        part.reference = $module._filesystem.volumes[n];
+                        route[route.length] = part;
+                    } 
+                }
+                if (route.length == 0) {
+                    throw new $mfs.sys.FileException("Could not find volume '" + split[i].toLowerCase() + "' in part of path '" + path + "'.");
+                }
+            } else {
+                //We need to find either a directory or a file with the filename mentioned.
+                var found = false;
+                for (var n = 0; n < route[0].Volume.Meta.directories.length; n++) {
+                    if (route[0].Volume.Meta.directories[n].toLowerCase() == split[i].toLowerCase()) {
+                        //We've found a directory.
+                        var part = new $mfs.defs.pathpart();
+                        part.name = $module._filesystem.volumes[n].Volume.MountName;
+                        part.type = "dir";
+                        part.reference = $module._filesystem.volumes[n];
+                        route[route.length] = part;
+                        found = true;
+                    }
+                }
+                //Lets check files now.
+                if (!found && i!=split.length-1) {
+                    for (var n = 0; n < route[0].Volume.Meta.directories.length; n++) {
+                        if (route[0].Volume.Meta.directories[n].toLowerCase() == split[i].toLowerCase()) {
+                            //We've found a directory.
+                            var part = new $mfs.defs.pathpart();
+                            part.name = $module._filesystem.volumes[n].Volume.MountName;
+                            part.type = "dir";
+                            part.reference = $module._filesystem.volumes[n];
+                            route[route.length] = part;
+                            found = true;
+                        }
+                    }
+                } else {
+                    throw new $mfs.sys.FileException("Could not find part of path '" + split[i].toLowerCase() + "' in '" + path + "'. Does the file or directory exist?");
+                }
+              
+            }
+        }
+    }
+
+    return route;
+}
+
+
 //Abstract objects for dealing with data.
 $mfs.File = new Object();
 
@@ -330,6 +399,8 @@ $mfs.File.ReadBytes = function (path, start, count) {
 $mfs.File.ReadText = function (path, start, count) {
     throw new $mfs.sys.NotImplementedException();
 }
+
+$mfs.Directory = new Object();
 //Creates a directory at the specified location.
 $mfs.Directory.CreateDirectory = function (path) {
     throw new $mfs.sys.NotImplementedException();

@@ -55,3 +55,10 @@ $mfs.defs.file = function () {
     this.size = 832642; //File size in bytes.
     this.chunks = []; //Integer ID of chunks which contain the file, sequential order
 }
+
+Known Issues
+============
+
+The code may not recognize files if there is a directory with the same name in the same structure, this is solved through checks but will fail if the serialized metadata is changed outside of Magma.
+
+Performance may be slow when indexing large numbers of files, this can be solved by implementing a lookup index and sorting the directory alphabetically periodically so that lookup loops occurr closer to their likely location.
