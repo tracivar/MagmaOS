@@ -162,6 +162,18 @@ $mfs.func.newGuid = function () {
     }
     return (S4() + S4() + "-" + S4()).toLowerCase();
 }
+$mfs.func.chunkToB64 = function (u8a) {
+    var CHUNK_SZ = 16384
+    var c = [];
+    for (var i = 0; i < u8a.length; i += CHUNK_SZ) {
+        c.push(String.fromCharCode.apply(null, u8a.subarray(i, i + CHUNK_SZ)));
+    }
+    return c.join("");
+}
+$mfs.func.b64toChunk = function (string) {
+    var u8 = new Uint8Array([65, 66, 67, 68]);
+    var b64encoded = btoa(Uint8ToString(string));
+}
 
 $mfs.defs.root = function () {
 
@@ -171,6 +183,17 @@ $mfs.defs.root = function () {
     this.memcache = true; //Whether to keep the entire collection in memory.
     this.directories = new Array();
     this.files = new Array();
+    this.chunks = new Array();
+    this.used = function () {
+        var used =0;
+        for (var n = 0; n < this.chunks.length; n++) {
+            if (this.chunks[n].owner != 0) {
+                used++;
+            }
+        }
+        return used;
+    }
+
 }
 
 $mfs.defs.directory = function () {
@@ -190,8 +213,8 @@ $mfs.defs.file = function () {
     this.modified = Date.now();  //Unix epoch ms
     this.hidden = false;
     this.system = false;
-    this.directory = "a570b6d8-5f93"; //GUID of the directory
-    this.size = 832642; //File size in bytes.
+    this.directory = ""; //GUID of the directory
+    this.size = 0; //File size in bytes.
     this.chunks = []; //Integer ID of chunks which contain the file, sequential order
 }
 
@@ -227,10 +250,15 @@ $mfs.log.volume = function () {
     this.cacheChunks = new Array();
     this.cacheLimit = 64; //Limit to how many chunks can be cached at once.
 }
+$mfs.log.chunkdata = function () {
+    this.data = new Uint8Array(16384);
+}
 $mfs.log.chunk = function () {
     this.ID = 0;
-    this.data = new Uint8Array(16384);
+    this.data = null;
+    this.active = false;
     this.lastAccessed = Date.now();
+    this.owner = 0;
 }
 $mfs.log.file = function () {
     this.definition = new $mfs.defs.file();
@@ -269,7 +297,9 @@ $mfs.sys.memoryvolume = function (obj) {
 
                     //Create chunks in memory.
                     for (var i = 0; i < obj.size; i++) {
-                        this.Volume.cacheChunks[i] = new $mfs.log.chunk();
+                        this.Volume.Meta.chunks[i] = new $mfs.log.chunk();
+                        this.Volume.Meta.chunks[i].ID = i;
+                        this.Volume.Meta.chunks[i].data = new $mfs.log.chunkdata();
                     }
 
 
@@ -323,6 +353,7 @@ $mfs.sys.route = function (path, silent) {
                         var part = new $mfs.defs.pathpart();
                         part.name = $module._filesystem.volumes[n].Volume.MountName;
                         part.type = "vol";
+                        part.volumeref = $module._filesystem.volumes[n];
                         part.reference = $module._filesystem.volumes[n];
                         route[route.length] = part;
                         break;
@@ -364,16 +395,19 @@ $mfs.sys.route = function (path, silent) {
                     }
                 }
                 //Lets check files now.
-                if (!found && i != split.length - 1) {
+                if (!found && i == split.length - 1) {
                     for (var n = 0; n < route[0].reference.Volume.Meta.files.length; n++) {
-                        if (route[0].reference.Volume.Meta.files[n].toLowerCase() == split[i].toLowerCase()) {
+                        if (route[0].reference.Volume.Meta.files[n].name.toLowerCase() == split[i].toLowerCase()) {
                             var doit = true;
-                            if (route[route.length - 1].type == "vol" && route[0].reference.Volume.Meta.file[n].GUID != null) {
+                            if (route[route.length - 1].type == "vol" && route[0].reference.Volume.Meta.files[n].directory != "") {
                                 doit = false;
                             } else {
-                                if (route[0].reference.Volume.Meta.file[n].GUID != route[route.length - 1].reference.GUID) {
+
+                                if (route[route.length - 1].type != "vol" && route[0].reference.Volume.Meta.files[n].GUID != route[route.length - 1].reference.GUID) {
                                     doit = false;
                                 }
+
+                              
                             }
                             if (doit) {
                                 //We've found a file.
@@ -414,7 +448,29 @@ $mfs.File.Open = function (path) {
 }
 //Attemepts to delete a file with the given path.
 $mfs.File.Delete = function (path) {
-    throw new $mfs.sys.NotImplementedException();
+    var success = false;
+    dir = $mfs.File.Exists(path);
+    if (dir) {
+
+            
+
+            for (var i = 0; i < dir.volumeref.Volume.Meta.files.length; i++) {
+                if (dir.volumeref.Volume.Meta.files[i].GUID == dir.reference.GUID) {
+                    var dirName = dir.reference.name;
+                    dir.volumeref.Volume.Meta.files.splice(i, 1);
+                    success = true;
+                    $mfs.sys.clearfile(dir.volumeref.Volume.Meta, dir.reference);
+                    $mfs.sys.SuccessMessage("Deleted file '" + dirName + "' at " + path + ".");
+                    break;
+                }
+            }
+
+      
+    } else {
+        throw new $mfs.sys.FileException("Could not find part of the path or the path provided was invalid.");
+    }
+
+    return success;
 }
 //Attemepts to move a file from one location to another, also used for renaming a file.
 $mfs.File.Move = function (source, destination) {
@@ -426,11 +482,83 @@ $mfs.File.Copy = function (source, destination) {
 }
 //Attempts to create a blank file at the given path.
 $mfs.File.Create = function (path) {
-    throw new $mfs.sys.NotImplementedException();
+    var success = false;
+    if (path.length > 0 && path.indexOf("/") >= 0) {
+
+        var route = $mfs.sys.route(path, true);
+
+        if (route.length > 0) {
+            var chain = path.split('/');
+
+            for (var i = 0; i < chain.length; i++) {
+                if (chain[i] == "" || chain[i] == " ") {
+                    chain.splice(i, 1);
+                    i--;
+                }
+            }
+            var fileToMake = chain[chain.length - 1];
+
+            if (route[route.length - 1].name.toLowerCase() != fileToMake.toLowerCase() || route[route.length - 1].type != "fil" || route.length != chain.length) {
+              
+                if (route.length == chain.length - 1) {
+                    var fileObj = new $mfs.defs.file();
+                    fileObj.name = fileToMake;
+                    fileObj.directory = (route[route.length - 1].type == "dir") ? route[route.length - 1].reference.GUID : "";
+
+                    route[0].reference.Volume.Meta.files[route[0].reference.Volume.Meta.files.length] = fileObj;
+                    //Allocate 1 chunk to the object.
+                    $mfs.sys.imprintfile(route[0].reference.Volume.Meta, fileObj, 8192);
+                    success = true;
+
+                    $mfs.sys.SuccessMessage("Created file '" + fileToMake + "' at " + path + ".");
+                } else {
+                    if (route.length == chain.length) {
+                        throw new $mfs.sys.FileException("A directory or file with the same name '" + fileToMake + "' already exists at " + path + ".");
+                    } else {
+                        throw new $mfs.sys.FileException("Part of the path is missing '" + path + "', could not create file.");
+                    }
+                }
+
+            } else {
+               
+                    throw new $mfs.sys.FileException("The file '" + fileToMake + "' already exists at " + path + ".");
+               
+               
+            }
+        } else {
+            throw new $mfs.sys.FileException("Could not find part of the path or the path provided was invalid.");
+        }
+    } else {
+        throw new $mfs.sys.FileException("The path provided was not a valid path.");
+    }
+
+    return success;
 }
 //Returns true if the file exists at the location.
 $mfs.File.Exists = function (path) {
-    throw new $mfs.sys.NotImplementedException();
+    if (path.length > 0 && path.indexOf("/") >= 0) {
+        var route = $mfs.sys.route(path, true);
+
+        if (route.length > 0) {
+            var chain = path.split('/');
+
+            for (var i = 0; i < chain.length; i++) {
+                if (chain[i] == "" || chain[i] == " ") {
+                    chain.splice(i, 1);
+                    i--;
+                }
+            }
+            if (chain.length == route.length && route[route.length - 1].type == "fil") {
+                return route[route.length - 1];
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    } else {
+        return false;
+    }
 }
 //Writes bytes to the end of the file.
 $mfs.File.AppendBytes = function (path, bytes) {
@@ -468,7 +596,7 @@ $mfs.Directory.CreateDirectory = function (path) {
             }
             var dirToMake = chain[chain.length - 1];
 
-            if (route[route.length - 1].name.toLowerCase() != dirToMake.toLowerCase()) {
+            if (route[route.length - 1].name.toLowerCase() != dirToMake.toLowerCase() || route[route.length - 1].type != "dir" || route.length != chain.length) {
                 if (route.length == chain.length - 1) {
                     var dirObj = new $mfs.defs.directory();
                     dirObj.name = dirToMake;
@@ -501,7 +629,7 @@ $mfs.Directory.Delete = function (path) {
     if (dir) {
 
         if ($mfs.Directory.GetDirectories(path).length == 0 && $mfs.Directory.GetFiles(path).length == 0) {
-            
+
             for (var i = 0; i < dir.volumeref.Volume.Meta.directories.length; i++) {
                 if (dir.volumeref.Volume.Meta.directories[i].GUID == dir.reference.GUID) {
                     var dirName = dir.reference.name;
@@ -513,7 +641,7 @@ $mfs.Directory.Delete = function (path) {
             }
 
         } else {
-            throw new $mfs.sys.FileException("The directory at "+path+" contains files or folders. You cannot delete this directory.");
+            throw new $mfs.sys.FileException("The directory at " + path + " contains files or folders. You cannot delete this directory.");
         }
 
     } else {
@@ -532,8 +660,14 @@ $mfs.Directory.GetDirectories = function (path) {
 
         //Return directories.
         for (var i = 0; i < dir.volumeref.Volume.Meta.directories.length; i++) {
-            if (dir.volumeref.Volume.Meta.directories[i].parent == dir.reference.GUID) {
-                array[array.length] = dir.volumeref.Volume.Meta.directories[i];
+            if (dir.type != "vol") {
+                if (dir.volumeref.Volume.Meta.directories[i].parent == dir.reference.GUID) {
+                    array[array.length] = dir.volumeref.Volume.Meta.directories[i];
+                }
+            } else {
+                if (dir.volumeref.Volume.Meta.directories[i].parent == null) {
+                    array[array.length] = dir.volumeref.Volume.Meta.directories[i];
+                }
             }
         }
 
@@ -550,19 +684,24 @@ $mfs.Directory.GetFiles = function (path) {
     if (dir) {
         //Return directories.
         for (var i = 0; i < dir.volumeref.Volume.Meta.files.length; i++) {
-            if (dir.volumeref.Volume.Meta.files[i].directory == dir.reference.GUID) {
+            if (dir.type != "vol" || dir.volumeref.Volume.Meta.files[i].directory != "") {
+                if (dir.volumeref.Volume.Meta.files[i].directory == dir.reference.GUID) {
+                    array[array.length] = dir.volumeref.Volume.Meta.files[i];
+                }
+            } else {
                 array[array.length] = dir.volumeref.Volume.Meta.files[i];
             }
+
         }
     } else {
-        throw new $mfs.sys.FileException("Cannot enumerate files for "+path+". Could not find part of the path or the path provided was invalid.");
+        throw new $mfs.sys.FileException("Cannot enumerate files for " + path + ". Could not find part of the path or the path provided was invalid.");
     }
     return array;
 }
 
 //Returns false if a directory doesn't exist at the location, returns the directory if it does.
 $mfs.Directory.Exists = function (path) {
-    
+
     if (path.length > 0 && path.indexOf("/") >= 0) {
         var route = $mfs.sys.route(path, true);
 
@@ -575,7 +714,7 @@ $mfs.Directory.Exists = function (path) {
                     i--;
                 }
             }
-            if (chain.length == route.length) {
+            if (chain.length == route.length && route[route.length - 1].type == "dir" || chain.length == route.length && route[route.length - 1].type == "vol") {
                 return route[route.length - 1];
             } else {
                 return false;
@@ -588,6 +727,63 @@ $mfs.Directory.Exists = function (path) {
     }
 }
 
+function getMaxOfArray(numArray) {
+    return Math.max.apply(null, numArray);
+}
+
+//This function takes an file definition and attempts to pre-eallocate chunks for itself. Useful if file growth is a known quantity and you want to guarantee available space.
+//Note that this function is VERY expensive.
+$mfs.sys.imprintfile = function (root, fileRef, length) {
+    if (fileRef instanceof $mfs.defs.file && root instanceof $mfs.defs.root) {
+        var targetLength = (fileRef.chunks.length * 16384) + length;
+        var blocksRequired = Math.ceil(targetLength / 16384);
+        var blocksToCreate = blocksRequired - fileRef.chunks.length;
+        var allocated = 0;
+        var start = getMaxOfArray(fileRef.chunks);
+        if (start.toString() == "-Infinity") {
+            start = 0;
+        }
+        for (var i = start; i < root.chunks.length ; i++) {
+            if (root.chunks[i].owner == 0) {
+                root.chunks[i].owner = fileRef.GUID;
+                fileRef.chunks[fileRef.chunks.length] = i;
+                blocksToCreate--;
+                allocated++;
+            }
+            if (blocksToCreate == 0) { break; }
+        }
+
+        if (blocksToCreate > 0) {
+            throw new $mfs.sys.FileException("Could not allocate space for " + fileRef.name + " because the volume was full.");
+        } else {
+            $mfs.sys.SuccessMessage("Allocated " + allocated.toString() + " blocks for '" + fileRef.name + "'. Used: " + Math.floor(fileRef.size / 1024).toString() + "KB Available: " + Math.floor(blocksRequired * 16) + "KB");
+        }
+
+    }
+}
+
+//This function takes a file definition and removes all chunk ownership and size information, essentially making the file blank.
+//The data may still persist, but it is unindexed and should eventually be overwritten.
+$mfs.sys.clearfile = function (root, fileRef) {
+    if (fileRef instanceof $mfs.defs.file && root instanceof $mfs.defs.root) {
+
+        var clear = 0;
+        for (var i = 0; i < root.chunks.length ; i++) {
+            if (root.chunks[i].owner == fileRef.GUID) {
+                root.chunks[i].owner = 0;
+                clear++;
+            }
+        }
+
+        fileRef.chunks = new Array();
+        fileRef.size = 0;
+
+  
+            $mfs.sys.SuccessMessage("Cleared " + clear.toString() + " blocks in use by '" + fileRef.name + "'. KB Free: " + (clear * 16).toString() + "KB");
+     
+
+    }
+}
 
 $mfs.sys.FileException = function (message) {
     this.Name = "FileException";
